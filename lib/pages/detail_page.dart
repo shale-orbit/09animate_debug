@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../app_errors.dart';
 import '../data/book_repo.dart';
 import '../widgets/book_cover.dart';
 
-/// 步骤一：详情页。
+/// 步骤三（已修复问题二）：详情页。
 ///
 /// 交互：Hero 封面从列表位飞过来，正文淡入（FadeTransition）。
-/// 缺陷（问题二·异常与规范）：二段加载的 catch 里只打印日志，
-/// 不 setState、不给界面任何反馈 —— 断网时正文区永远空白（静默白屏）。
+/// 修复要点：二段加载分「加载中 / 成功 / 失败」三态；
+/// 失败时接住异常、切错误态，界面内给错误条 + 重试，并交给全局异常入口留痕。
 class BookDetailPage extends StatefulWidget {
   const BookDetailPage({super.key, required this.book});
 
@@ -22,6 +23,7 @@ class _BookDetailPageState extends State<BookDetailPage>
   late final AnimationController _enter;
   late final Animation<double> _fade;
   BookDetail? _detail;
+  String? _error;
 
   @override
   void initState() {
@@ -36,7 +38,13 @@ class _BookDetailPageState extends State<BookDetailPage>
     _loadDetail();
   }
 
-  Future<void> _loadDetail() async {
+  Future<void> _loadDetail({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _detail = null;
+        _error = null;
+      });
+    }
     try {
       final BookDetail detail = await BookRepo.instance.fetchDetail(
         widget.book.id,
@@ -45,10 +53,13 @@ class _BookDetailPageState extends State<BookDetailPage>
         return;
       }
       setState(() => _detail = detail);
-    } catch (e) {
-      // 【问题二·病根】断网时到这里就结束了：
-      // 只打印，没有 setState 切错误态，也没有重试入口，界面保持一片空白。
-      debugPrint('load detail failed: $e');
+    } catch (e, s) {
+      if (!mounted) {
+        return;
+      }
+      // 修复后：接住 → 交给全局入口留痕 → setState 切错误态，界面可见可重试。
+      AppErrors.report(e, s, source: 'BookDetailPage.load');
+      setState(() => _error = '网络开小差了，请检查网络后重试。');
     }
   }
 
@@ -96,11 +107,81 @@ class _BookDetailPageState extends State<BookDetailPage>
             ),
           ),
           const SizedBox(height: 20),
-          // 二段加载区：断网时这里就是用户看到的“白屏”。
-          if (_detail == null)
-            const SizedBox(height: 220)
+          // 二段加载区：加载中转圈、失败给错误条、成功出正文，不再有静默白屏。
+          if (_error != null)
+            _ErrorBar(message: _error!, onRetry: () => _loadDetail(reset: true))
+          else if (_detail == null)
+            const _LoadingBlock()
           else
             _DetailSection(detail: _detail!),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingBlock extends StatelessWidget {
+  const _LoadingBlock();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 120,
+      child: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+/// 界面内错误条：断网时替代原来的空白，告诉用户发生了什么、能做什么。
+class _ErrorBar extends StatelessWidget {
+  const _ErrorBar({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colors = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.error_outline, color: colors.onErrorContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  '加载失败',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              foregroundColor: colors.onErrorContainer,
+            ),
+            child: const Text('重试'),
+          ),
         ],
       ),
     );

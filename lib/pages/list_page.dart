@@ -67,7 +67,7 @@ class _BookListPageState extends State<BookListPage>
       appBar: AppBar(
         title: const Text('我的收藏'),
         actions: <Widget>[
-          // 演示用开关：切换后详情页会模拟断网，正文加载不出来（问题二，步骤三再修）。
+          // 演示用开关：切换后详情页会模拟断网，用来验证错误条与重试。
           IconButton(
             tooltip: BookRepo.instance.offline ? '当前：模拟断网' : '当前：联网',
             icon: Icon(BookRepo.instance.offline ? Icons.wifi_off : Icons.wifi),
